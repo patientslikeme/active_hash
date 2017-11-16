@@ -27,11 +27,9 @@ module ActiveHash
         options = {
           :class_name => association_id.to_s.camelize,
           :foreign_key => association_id.to_s.foreign_key,
-          :shortcuts => []
         }.merge(options)
         # Define default primary_key with provided class_name if any
         options[:primary_key] ||= options[:class_name].constantize.primary_key
-        options[:shortcuts] = [options[:shortcuts]] unless options[:shortcuts].kind_of?(Array)
 
         define_method(association_id) do
           options[:class_name].constantize.send("find_by_#{options[:primary_key]}", send(options[:foreign_key]))
@@ -39,50 +37,6 @@ module ActiveHash
 
         define_method("#{association_id}=") do |new_value|
           send "#{options[:foreign_key]}=", new_value ? new_value.send(options[:primary_key]) : nil
-        end
-
-        options[:shortcuts].each do |shortcut|
-          define_method("#{association_id}_#{shortcut}") do
-            send(association_id).try(shortcut)
-          end
-
-          define_method("#{association_id}_#{shortcut}=") do |new_value|
-            send "#{association_id}=", new_value ? options[:class_name].constantize.send("find_by_#{shortcut}", new_value) : nil
-          end
-        end
-
-        if ActiveRecord::Reflection.respond_to?(:create)
-          reflection = ActiveRecord::Reflection.create(
-            :belongs_to,
-            association_id.to_sym,
-            nil,
-            options,
-            self
-          )
-
-          ActiveRecord::Reflection.add_reflection(
-            self,
-            association_id.to_sym,
-            reflection
-          )
-        else
-          method = ActiveRecord::Base.method(:create_reflection)
-          if method.respond_to?(:parameters) && method.parameters.length == 5
-            create_reflection(
-              :belongs_to,
-              association_id.to_sym,
-              nil,
-              options,
-              self
-            )
-          else
-            create_reflection(
-              :belongs_to,
-              association_id.to_sym,
-              options,
-              options[:class_name].constantize
-            )
-          end
         end
       end
     end
