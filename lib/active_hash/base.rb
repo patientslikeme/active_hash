@@ -9,36 +9,13 @@ module ActiveHash
   class IdError < StandardError
   end
 
-  class FileTypeMismatchError < StandardError
-  end
-
   class Base
+    extend ActiveModel::Naming
+    include ActiveModel::Conversion
 
-    if respond_to?(:class_attribute)
-      class_attribute :_data, :dirty, :default_attributes
-    else
-      class_inheritable_accessor :_data, :dirty, :default_attributes
-    end
-
-    if Object.const_defined?(:ActiveModel)
-      extend ActiveModel::Naming
-      include ActiveModel::Conversion
-    else
-      def to_param
-        id.present? ? id.to_s : nil
-      end
-    end
+    class_attribute :_data, :default_attributes #, :dirty
 
     class << self
-
-      def cache_key
-        if Object.const_defined?(:ActiveModel)
-          model_name.cache_key
-        else
-          ActiveSupport::Inflector.tableize(self.name).downcase
-        end
-      end
-
       def primary_key
         "id"
       end
@@ -47,30 +24,11 @@ module ActiveHash
         @field_names ||= []
       end
 
-      def the_meta_class
-        class << self
-          self
-        end
-      end
-
-      def compute_type(type_name)
-        self
-      end
-
-      def pluralize_table_names
-        true
-      end
-
-      def empty?
-        false
-      end
-
       def data
         _data
       end
 
       def data=(array_of_hashes)
-        mark_dirty
         @records = nil
         reset_record_index
         self._data = array_of_hashes
@@ -90,9 +48,8 @@ module ActiveHash
 
       def insert(record)
         @records ||= []
-        record[:id] ||= next_id
-        validate_unique_id(record) if dirty
-        mark_dirty
+        record.id ||= next_id
+        validate_unique_id(record)
 
         add_to_record_index({ record.id.to_s => @records.length })
         @records << record
@@ -107,51 +64,24 @@ module ActiveHash
         end
       end
 
-      def record_index
+      private def record_index
         @record_index ||= {}
       end
 
-      private :record_index
-
-      def reset_record_index
+      private def reset_record_index
         record_index.clear
       end
 
-      private :reset_record_index
-
-      def add_to_record_index(entry)
+      private def add_to_record_index(entry)
         record_index.merge!(entry)
       end
 
-      private :add_to_record_index
-
-      def validate_unique_id(record)
+      private def validate_unique_id(record)
         raise IdError.new("Duplicate ID found for record #{record.attributes.inspect}") if record_index.has_key?(record.id.to_s)
       end
 
-      private :validate_unique_id
-
-      def create(attributes = {})
-        record = new(attributes)
-        record.save
-        mark_dirty
-        record
-      end
-
-      alias_method :add, :create
-
-      def create!(attributes = {})
-        record = new(attributes)
-        record.save!
-        record
-      end
-
-      def all(options={})
-        if options.has_key?(:conditions)
-          where(options[:conditions])
-        else
-          @records ||= []
-        end
+      def all
+        @records ||= []
       end
 
       def where(options)
@@ -177,7 +107,7 @@ module ActiveHash
         find_by(options) || (raise RecordNotFound.new("Couldn't find #{name}"))
       end
 
-      def match_options?(record, options)
+      private def match_options?(record, options)
         options.all? do |col, match|
           if match.kind_of?(Array)
             match.include?(record[col])
@@ -187,36 +117,10 @@ module ActiveHash
         end
       end
 
-      private :match_options?
-
-      def count
-        all.length
-      end
-
-      def transaction
-        yield
-      rescue LocalJumpError => err
-        raise err
-      rescue StandardError => e
-        unless Object.const_defined?(:ActiveRecord) && e.is_a?(ActiveRecord::Rollback)
-          raise e
-        end
-      end
-
-      def delete_all
-        mark_dirty
-        reset_record_index
-        @records = []
-      end
-
-      def find(id, * args)
+      def find(id)
         case id
           when nil
             nil
-          when :all
-            all
-          when :first
-            all(*args).first
           when Array
             id.map { |i| find(i) }
           else
@@ -231,7 +135,7 @@ module ActiveHash
         index and @records[index]
       end
 
-      delegate :first, :last, :to => :all
+      delegate :first, :last, :each, to: :all
 
       def fields(*args)
         options = args.extract_options!
@@ -248,65 +152,20 @@ module ActiveHash
         define_getter_method(field_name, options[:default])
         define_setter_method(field_name)
         define_interrogator_method(field_name)
-        define_custom_find_method(field_name)
-        define_custom_find_all_method(field_name)
       end
 
-      def validate_field(field_name)
+      private def validate_field(field_name)
         if [:attributes].include?(field_name.to_sym)
           raise ReservedFieldError.new("#{field_name} is a reserved field in ActiveHash.  Please use another name.")
         end
       end
-
-      private :validate_field
-
-      def respond_to?(method_name, include_private=false)
-        super ||
-          begin
-            config = configuration_for_custom_finder(method_name)
-            config && config[:fields].all? do |field|
-              field_names.include?(field.to_sym) || field.to_sym == :id
-            end
-          end
-      end
-
-      def method_missing(method_name, *args)
-        return super unless respond_to? method_name
-
-        config = configuration_for_custom_finder(method_name)
-        attribute_pairs = config[:fields].zip(args)
-        matches = all.select { |base| attribute_pairs.all? { |field, value| base.send(field).to_s == value.to_s } }
-
-        if config[:all?]
-          matches
-        else
-          result = matches.first
-          if config[:bang?]
-            result || raise(RecordNotFound, "Couldn\'t find #{name} with #{attribute_pairs.collect { |pair| "#{pair[0]} = #{pair[1]}" }.join(', ')}")
-          else
-            result
-          end
-        end
-      end
-
-      def configuration_for_custom_finder(finder_name)
-        if finder_name.to_s.match(/^find_(all_)?by_(.*?)(!)?$/) && !($1 && $3)
-          {
-            :all? => !!$1,
-            :bang? => !!$3,
-            :fields => $2.split('_and_')
-          }
-        end
-      end
-
-      private :configuration_for_custom_finder
 
       def add_default_value field_name, default_value
         self.default_attributes ||= {}
         self.default_attributes[field_name] = default_value
       end
 
-      def define_getter_method(field, default_value)
+      private def define_getter_method(field, default_value)
         unless instance_methods.include?(field.to_sym)
           define_method(field) do
             attributes[field].nil? ? default_value : attributes[field]
@@ -314,9 +173,7 @@ module ActiveHash
         end
       end
 
-      private :define_getter_method
-
-      def define_setter_method(field)
+      private def define_setter_method(field)
         method_name = :"#{field}="
         unless instance_methods.include?(method_name)
           define_method(method_name) do |new_val|
@@ -325,9 +182,7 @@ module ActiveHash
         end
       end
 
-      private :define_setter_method
-
-      def define_interrogator_method(field)
+      private def define_interrogator_method(field)
         method_name = :"#{field}?"
         unless instance_methods.include?(method_name)
           define_method(method_name) do
@@ -336,41 +191,7 @@ module ActiveHash
         end
       end
 
-      private :define_interrogator_method
-
-      def define_custom_find_method(field_name)
-        method_name = :"find_by_#{field_name}"
-        unless singleton_methods.include?(method_name)
-          the_meta_class.instance_eval do
-            define_method(method_name) do |*args|
-              args.extract_options!
-              identifier = args[0]
-              all.detect { |record| record.send(field_name) == identifier }
-            end
-          end
-        end
-      end
-
-      private :define_custom_find_method
-
-      def define_custom_find_all_method(field_name)
-        method_name = :"find_all_by_#{field_name}"
-        unless singleton_methods.include?(method_name)
-          the_meta_class.instance_eval do
-            unless singleton_methods.include?(method_name)
-              define_method(method_name) do |*args|
-                args.extract_options!
-                identifier = args[0]
-                all.select { |record| record.send(field_name) == identifier }
-              end
-            end
-          end
-        end
-      end
-
-      private :define_custom_find_all_method
-
-      def auto_assign_fields(array_of_hashes)
+      private def auto_assign_fields(array_of_hashes)
         (array_of_hashes || []).inject([]) do |array, row|
           row.symbolize_keys!
           row.keys.each do |key|
@@ -384,33 +205,10 @@ module ActiveHash
         end
       end
 
-      private :auto_assign_fields
-
       # Needed for ActiveRecord polymorphic associations
       def base_class
         ActiveHash::Base
       end
-
-      def reload
-        reset_record_index
-        self.data = _data
-        mark_clean
-      end
-
-      private :reload
-
-      def mark_dirty
-        self.dirty = true
-      end
-
-      private :mark_dirty
-
-      def mark_clean
-        self.dirty = false
-      end
-
-      private :mark_clean
-
     end
 
     def initialize(attributes = {})
@@ -434,39 +232,12 @@ module ActiveHash
       attributes[key]
     end
 
-    def _read_attribute(key)
-      attributes[key]
-    end
-    alias_method :read_attribute, :_read_attribute
-
-    def []=(key, val)
-      @attributes[key] = val
-    end
-
     def id
       attributes[:id] ? attributes[:id] : nil
     end
 
     def id=(id)
       @attributes[:id] = id
-    end
-
-    alias quoted_id id
-
-    def new_record?
-      !self.class.all.include?(self)
-    end
-
-    def destroyed?
-      false
-    end
-
-    def persisted?
-      self.class.all.map(&:id).include?(id)
-    end
-
-    def readonly?
-      true
     end
 
     def eql?(other)
@@ -478,48 +249,5 @@ module ActiveHash
     def hash
       id.hash
     end
-
-    def cache_key
-      case
-        when new_record?
-          "#{self.class.cache_key}/new"
-        when timestamp = self[:updated_at]
-          "#{self.class.cache_key}/#{id}-#{timestamp.to_s(:number)}"
-        else
-          "#{self.class.cache_key}/#{id}"
-      end
-    end
-
-    def errors
-      obj = Object.new
-
-      def obj.[](key)
-        []
-      end
-
-      def obj.full_messages()
-        []
-      end
-
-      obj
-    end
-
-    def save(*args)
-      unless self.class.exists?(self)
-        self.class.insert(self)
-      end
-      true
-    end
-
-    alias save! save
-
-    def valid?
-      true
-    end
-
-    def marked_for_destruction?
-      false
-    end
-
   end
 end
