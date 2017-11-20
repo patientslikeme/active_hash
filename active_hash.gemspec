@@ -45,5 +45,6 @@ Gem::Specification.new do |s|
   ].flatten
   s.test_files = s.files.grep(%r{^(test|spec|features)/})
   s.add_runtime_dependency('activesupport', '>= 2.2.2')
+  s.add_development_dependency "gemfury"
   s.required_ruby_version = '>= 1.9.3'
 end

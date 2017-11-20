@@ -8,3 +8,9 @@ RSpec::Core::RakeTask.new(:spec) do |spec|
 end
 
 task :default => :wwtd
+
+# override rubygems' normal release task to use Gemfury
+Rake::Task['release'].clear
+task :release do
+  Rake::Task['fury:release'].invoke(nil, "patientslikeme")
+end
