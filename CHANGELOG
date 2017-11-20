@@ -1,3 +1,6 @@
+2017-11-20 (v2.0.0)
+  - (PatientsLikeMe) Removed many features.
+
 2017-06-14 (v1.5.2)
   - Fix find_by when passed an invalid id [#152](https://github.com/zilkey/active_hash/pull/152) Thanks, @davidstosik
 
